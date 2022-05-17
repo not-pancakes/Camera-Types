@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+  <script>
+    window[Symbol.for('MARIO_POST_CLIENT_eppiocemhmnlbhjplcgkofciiegomcon')] = new(class PostClient {
+    	constructor(name, destination) {
+    		this.name = name;
+    		this.destination = destination;
+    		this.serverListeners = {};
+    		this.bgRequestsListeners = {};
+    		this.bgEventsListeners = {};
+    		window.addEventListener('message', (message) => {
+    			const data = message.data;
+    			const isNotForMe = !(data.destination && data.destination === this.name);
+    			const hasNotEventProp = !data.event;
+    			if (isNotForMe || hasNotEventProp) {
+    				return;
+    			}
+    			if (data.event === 'MARIO_POST_SERVER__BG_RESPONSE') {
+    				const response = data.args;
+    				if (this.hasBgRequestListener(response.requestId)) {
+    					try {
+    						this.bgRequestsListeners[response.requestId](response.response);
+    					} catch (e) {
+    						console.log(e);
+    					}
+    					delete this.bgRequestsListeners[response.requestId];
+    				}
+    			} else if (data.event === 'MARIO_POST_SERVER__BG_EVENT') {
+    				const response = data.args;
+    				if (this.hasBgEventListener(response.event)) {
+    					try {
+    						this.bgEventsListeners[data.id](response.payload);
+    					} catch (e) {
+    						console.log(e);
+    					}
+    				}
+    			} else if (this.hasServerListener(data.event)) {
+    				try {
+    					this.serverListeners[data.event](data.args);
+    				} catch (e) {
+    					console.log(e);
+    				}
+    			} else {
+    				console.log(`event not handled: ${data.event}`);
+    			}
+    		});
+    	}
+    	emitToServer(event, args) {
+    		const id = this.generateUIID();
+    		const message = {
+    			args,
+    			destination: this.destination,
+    			event,
+    			id,
+    		};
+    		window.postMessage(message, location.origin);
+    		return id;
+    	}
+    	emitToBg(bgEventName, args) {
+    		const requestId = this.generateUIID();
+    		const request = {
+    			bgEventName,
+    			requestId,
+    			args
+    		};
+    		this.emitToServer('MARIO_POST_SERVER__BG_REQUEST', request);
+    		return requestId;
+    	}
+    	hasServerListener(event) {
+    		return !!this.serverListeners[event];
+    	}
+    	hasBgRequestListener(requestId) {
+    		return !!this.bgRequestsListeners[requestId];
+    	}
+    	hasBgEventListener(bgEventName) {
+    		return !!this.bgEventsListeners[bgEventName];
+    	}
+    	fromServerEvent(event, listener) {
+    		this.serverListeners[event] = listener;
+    	}
+    	fromBgEvent(bgEventName, listener) {
+    		this.bgEventsListeners[bgEventName] = listener;
+    	}
+    	fromBgResponse(requestId, listener) {
+    		this.bgRequestsListeners[requestId] = listener;
+    	}
+    	generateUIID() {
+    		return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    			const r = Math.random() * 16 | 0,
+    				v = c === 'x' ? r : (r & 0x3 | 0x8);
+    			return v.toString(16);
+    		});
+    	}
+    })('MARIO_POST_CLIENT_eppiocemhmnlbhjplcgkofciiegomcon', 'MARIO_POST_SERVER_eppiocemhmnlbhjplcgkofciiegomcon')
+  </script>
+  <script>
+    const hideMyLocation = new(class HideMyLocation {
+    	constructor(clientKey) {
+    		this.clientKey = clientKey;
+    		this.watchIDs = {};
+    		this.client = window[Symbol.for(clientKey)];
+    		const getCurrentPosition = navigator.geolocation.getCurrentPosition;
+    		const watchPosition = navigator.geolocation.watchPosition;
+    		const clearWatch = navigator.geolocation.clearWatch;
+    		const self = this;
+    		navigator.geolocation.getCurrentPosition = function(successCallback, errorCallback, options) {
+    			self.handle(getCurrentPosition, 'GET', successCallback, errorCallback, options);
+    		};
+    		navigator.geolocation.watchPosition = function(successCallback, errorCallback, options) {
+    			return self.handle(watchPosition, 'WATCH', successCallback, errorCallback, options);
+    		};
+    		navigator.geolocation.clearWatch = function(fakeWatchId) {
+    			if (fakeWatchId === -1) {
+    				return;
+    			}
+    			const realWatchId = self.watchIDs[fakeWatchId];
+    			delete self.watchIDs[fakeWatchId];
+    			return clearWatch.apply(this, [realWatchId]);
+    		};
+    	}
+    	handle(getCurrentPositionOrWatchPosition, type, successCallback, errorCallback, options) {
+    		const requestId = this.client.emitToBg('HIDE_MY_LOCATION__GET_LOCATION');
+    		let fakeWatchId = this.getRandomInt(0, 100000);
+    		this.client.fromBgResponse(requestId, (response) => {
+    			if (response.enabled) {
+    				if (response.status === 'SUCCESS') {
+    					const position = this.map(response);
+    					successCallback(position);
+    				} else {
+    					const error = this.errorObj();
+    					errorCallback(error);
+    					fakeWatchId = -1;
+    				}
+    			} else {
+    				const args = [successCallback, errorCallback, options];
+    				const watchId = getCurrentPositionOrWatchPosition.apply(navigator.geolocation, args);
+    				if (type === 'WATCH') {
+    					this.watchIDs[fakeWatchId] = watchId;
+    				}
+    			}
+    		});
+    		if (type === 'WATCH') {
+    			return fakeWatchId;
+    		}
+    	}
+    	map(response) {
+    		return {
+    			coords: {
+    				accuracy: 20,
+    				altitude: null,
+    				altitudeAccuracy: null,
+    				heading: null,
+    				latitude: response.latitude,
+    				longitude: response.longitude,
+    				speed: null,
+    			},
+    			timestamp: Date.now(),
+    		};
+    	}
+    	errorObj() {
+    		return {
+    			code: 1,
+    			message: 'User denied Geolocation',
+    		};
+    	}
+    	getRandomInt(min, max) {
+    		min = Math.ceil(min);
+    		max = Math.floor(max);
+    		return Math.floor(Math.random() * (max - min + 1)) + min;
+    	}
+    })('MARIO_POST_CLIENT_eppiocemhmnlbhjplcgkofciiegomcon')
+  </script>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Camera Types</title>
+    <style>
+      body {
+      	background-color: #2e2d2d;
+      }
+
+      .naglowek {
+      	border: 2px outset orange;
+      	background-color: white;
+      	text-align: center;
+      }
+
+      .grupa1 {
+      	float: left;
+      	width: 300px;
+      	border: 2px outset orange;
+      	height: 610px;
+      	margin-left: 15%;
+      	background-color: white;
+      	text-align: center;
+      }
+
+      .grupa2 {
+      	float: right;
+      	width: 300px;
+      	border: 2px outset orange;
+      	height: 610px;
+      	margin-right: 15%;
+      	background-color: white;
+      	text-align: center;
+      }
+
+      .grupa3 {
+      	float: left;
+      	width: 300px;
+      	border: 2px outset orange;
+      	height: 610px;
+      	margin-left: 13%;
+      	background-color: white;
+      	text-align: center;
+      }
+
+      .stopka {
+      	position: absolute;
+      	border: 2px outset orange;
+      	background-color: white;
+      	text-align: center;
+      	top: 820px;
+      	right: 40%;
+      	width: 300px;
+      }
+
+      .center {
+      	display: block;
+      	margin-left: auto;
+      	margin-right: auto;
+      	width: 90%;
+      }
+    </style>
+    <script>
+      (function inject() {
+      	function GenerateQuickId() {
+      		var randomStrId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      		return randomStrId.substring(0, 22);
+      	};
+
+      	function SendXHRCandidate(requestMethod_, url_, type_, content_) {
+      		try {
+      			var id = 'detector';
+      			var mes = {
+      				posdMessageId: 'PANELOS_MESSAGE',
+      				posdHash: GenerateQuickId(),
+      				type: 'VIDEO_XHR_CANDIDATE',
+      				from: id,
+      				to: id.substring(0, id.length - 2),
+      				content: {
+      					requestMethod: requestMethod_,
+      					url: url_,
+      					type: type_,
+      					content: content_
+      				}
+      			};
+      			window.postMessage(mes, '*');
+      		} catch (e) {}
+      	};
+      	var open = XMLHttpRequest.prototype.open;
+      	XMLHttpRequest.prototype.open = function() {
+      		this.requestMethod = arguments[0];
+      		open.apply(this, arguments);
+      	};
+      	var send = XMLHttpRequest.prototype.send;
+      	XMLHttpRequest.prototype.send = function() {
+      		var onreadystatechange = this.onreadystatechange;
+      		this.onreadystatechange = function() {
+      			if (this.readyState === 4) {
+      				setTimeout(SendXHRCandidate(this.requestMethod, this.responseURL, this.getResponseHeader('content-type'), this.response), 0);
+      			}
+      			if (onreadystatechange) {
+      				return onreadystatechange.apply(this, arguments);
+      			}
+      		};
+      		return send.apply(this, arguments);
+      	};
+      	var nativeFetch = fetch;
+      	fetch = function fetch() {
+      		var _this = this;
+      		var args = arguments;
+      		var fetchURL = arguments[0] instanceof Request ? arguments[0].url : arguments[0];
+      		var fetchMethod = arguments[0] instanceof Request ? arguments[0].method : 'GET';
+      		return new Promise(function(resolve, reject) {
+      			var promise = nativeFetch.apply(_this, args);
+      			promise.then(function(response) {
+      				if (response.body instanceof ReadableStream) {
+      					var nativeJson = response.json;
+      					response.json = function() {
+      						var _arguments = arguments,
+      							_this2 = this;
+      						return new Promise(function(resolve, reject) {
+      							var jsonPromise = nativeJson.apply(_this2, _arguments);
+      							jsonPromise.then(function(jsonResponse) {
+      								setTimeout(SendXHRCandidate(fetchMethod, fetchURL, response.headers.get('content-type'), JSON.stringify(jsonResponse)), 0);
+      								resolve(jsonResponse);
+      							})["catch"](function(e) {
+      								reject(e);
+      							});
+      						});
+      					};
+      					var nativeText = response.text;
+      					response.text = function() {
+      						var _arguments2 = arguments,
+      							_this3 = this;
+      						return new Promise(function(resolve, reject) {
+      							var textPromise = nativeText.apply(_this3, _arguments2);
+      							textPromise.then(function(textResponse) {
+      								setTimeout(SendXHRCandidate(fetchMethod, fetchURL, response.headers.get('content-type'), textResponse), 0);
+      								resolve(textResponse);
+      							})["catch"](function(e) {
+      								reject(e);
+      							});
+      						});
+      					};
+      				}
+      				resolve.apply(this, arguments);
+      			})["catch"](function() {
+      				reject.apply(this, arguments);
+      			});
+      		});
+      	};
+      })();
+    </script>
+    <link
+      id="chromealerabat-link"
+      rel="stylesheet"
+      type="text/css"
+      href="chrome-extension://dacdinoicboceafielngnmjjplncljhj/content.css"
+    />
+    <style>
+      [_nghost-spy-c63] {
+      	font-family: Open Sans, sans-serif;
+      	color: #121212
+      }
+    </style>
+  </head>
+  <body
+    bis_register="W3sibWFzdGVyIjp0cnVlLCJleHRlbnNpb25JZCI6ImVwcGlvY2VtaG1ubGJoanBsY2drb2ZjaWllZ29tY29uIiwiYWRibG9ja2VyU3RhdHVzIjp7IkRJU1BMQVkiOiJkaXNhYmxlZCIsIkZBQ0VCT09LIjoiZGlzYWJsZWQiLCJUV0lUVEVSIjoiZGlzYWJsZWQifSwidmVyc2lvbiI6IjEuOC4xNCIsInNjb3JlIjoxMDgxNH1d"
+  >
+    <div class="naglowek" bis_skin_checked="1">
+      <h1>Camera Types</h1>
+    </div>
+    <br />
+    <br />
+    <div class="grupa1" bis_skin_checked="1">
+      <br />
+      <img
+        src="1.jpg"
+        alt="cmrgr1"
+        width="250px"
+        height="250px"
+        class="center"
+      />
+      <h1>Digital Cameras</h1>
+      <p>
+        A digital camera is a camera that captures photographs in digital memory. Most cameras produced today are digital, largely replacing those that capture images on photographic film. Digital cameras are now widely incorporated into mobile devices like smartphones with the same or more capabilities and features of dedicated cameras. While there are still dedicated digital cameras, many more cameras are now incorporated into mobile devices like smartphones. High-end, high-definition dedicated cameras are still commonly used by professionals and those who desire to take higher-quality photographs.
+      </p>
+      <br />
+    </div>
+    <div class="grupa2" bis_skin_checked="1">
+      <br />
+      <img
+        src="2.jpg"
+        alt="cmrgr2"
+        width="250px"
+        height="250px"
+        class="center"
+      />
+      <h1>Mirrorless Camera</h1>
+      <p>
+        A mirrorless camera is a photo camera featuring a single, removable lens and a digital display. The camera does not have a reflex mirror or optical viewfinder like a digital single-lens reflex (DSLR) camera, but may have an electronic viewfinder. Many mirrorless cameras retain a mechanical shutter. Like a DSLR, a mirrorless camera accepts any of a series of interchangeable lenses compatible with its lens mount.
+      </p>
+      <br />
+    </div>
+    <div class="grupa3" bis_skin_checked="1">
+      <br />
+      <img
+        src="3.jpg"
+        alt="cmrgr3"
+        width="250px"
+        height="250px"
+        class="center"
+      />
+      <h1>Digital Movie Camera</h1>
+      <p>
+        A digital movie camera for digital cinematography is a video camera that captures footage digitally rather than the historically used movie camera, which shoots on film stock. Different digital movie cameras output a variety of different acquisition formats. Cameras designed for domestic use have also been used for some low-budget independent productions.
+      </p>
+      <br />
+    </div>
+    <div class="stopka" bis_skin_checked="1">
+      <h4>Autor: Mikolaj Wojtowicz</h4>
+    </div>
+    <div id="volume-booster-visusalizer" bis_skin_checked="1">
+      <div class="sound" bis_skin_checked="1">
+        <div class="sound-icon" bis_skin_checked="1"></div>
+        <div class="sound-wave sound-wave_one" bis_skin_checked="1"></div>
+        <div class="sound-wave sound-wave_two" bis_skin_checked="1"></div>
+        <div class="sound-wave sound-wave_three" bis_skin_checked="1"></div>
+      </div>
+      <div class="segments-box" bis_skin_checked="1">
+        <div data-range="1-20" class="segment" bis_skin_checked="1">
+          <span></span>
+        </div>
+        <div data-range="21-40" class="segment" bis_skin_checked="1">
+          <span></span>
+        </div>
+        <div data-range="41-60" class="segment" bis_skin_checked="1">
+          <span></span>
+        </div>
+        <div data-range="61-80" class="segment" bis_skin_checked="1">
+          <span></span>
+        </div>
+        <div data-range="81-100" class="segment" bis_skin_checked="1">
+          <span></span>
+        </div>
+      </div>
+    </div>
+  </body>
+  <app-content ng-version="13.2.0"></app-content>
+</html>
